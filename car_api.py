@@ -8,32 +8,6 @@ import micropython
 import math
 micropython.alloc_emergency_exception_buf(100)
 
-Dir_forward = 1
-Dir_backward = -1
-
-LF_forward = 1
-LF_backward = -1
-LB_forward = 1
-LB_backward = -1
-RF_forward = 1
-RF_backward = -1
-RB_forward = 1
-RB_backward = -1
-
-
-# left front wheel M1
-Motor_LF_PWM = PWM(Pin(12))
-Motor_LF_Dir = Pin(13, Pin.OUT)
-# right front wheel M2
-Motor_RF_PWM = PWM(Pin(15))
-Motor_RF_Dir = Pin(14, Pin.OUT)
-# right back wheel M3
-Motor_RB_PWM = PWM(Pin(16))
-Motor_RB_Dir = Pin(17, Pin.OUT)
-# left back wheel M4
-Motor_LB_PWM = PWM(Pin(19))
-Motor_LB_Dir = Pin(18, Pin.OUT)
-
 # mapping function
 def map(x,in_max, in_min, out_max, out_min):
     return (x - in_min)/(in_max - in_min)*(out_max - out_min) + out_min
