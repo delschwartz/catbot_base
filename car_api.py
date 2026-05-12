@@ -81,14 +81,14 @@ class Motor:
 
 class Line_tracking:
     def __init__(self):
-        self.ir_front_left  = Pin(3, Pin.IN)
-        self.ir_front_middle = Pin(2, Pin.IN)
-        self.ir_front_right  = Pin(1, Pin.IN)
+        self.ir_front_left  = Pin(8, Pin.IN)
+        self.ir_front_middle = Pin(10, Pin.IN)
+        self.ir_front_right  = Pin(9, Pin.IN)
         self.ir_left   = Pin(6, Pin.IN)
         self.ir_middle = Pin(5, Pin.IN)
         self.ir_right  = Pin(4, Pin.IN)
-        self.ir_back_left   = Pin(9, Pin.IN)
-        self.ir_back_middle = Pin(8, Pin.IN)
+        self.ir_back_left   = Pin(20, Pin.IN)
+        self.ir_back_middle = Pin(21, Pin.IN)
         self.ir_back_right  = Pin(7, Pin.IN)
 
     def get_ir_value(self):
