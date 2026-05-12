@@ -1,19 +1,10 @@
-from machine import Pin, PWM, I2C
-import array, time
-import rp2
-import os
-import machine
-from time import sleep_ms
+from machine import Pin, PWM
 import micropython
-import math
+
 micropython.alloc_emergency_exception_buf(100)
 
-# mapping function
-def map(x,in_max, in_min, out_max, out_min):
-    return (x - in_min)/(in_max - in_min)*(out_max - out_min) + out_min
-
 class Motor:
-    # Pin pairs: (pwm_forward_pin, dir_pin)
+    # Pin pairs: (fwd_pin, bwd_pin)
     MOTOR_PINS = {
         'LF': (12, 13),
         'RF': (15, 14),
@@ -21,78 +12,87 @@ class Motor:
         'LB': (18, 19),
     }
 
-    # direction -> [(motor, forward?), ...]  True=forward, False=backward, None=stop
+    # direction -> {motor: (forward: bool, speed_scale: float)}
     MOVE_MAP = {
-        'forward':        {'LF': (True,  1), 'RF': (True,  1), 'RB': (True,  1), 'LB': (True,  1)},
-        'backward':       {'LF': (False, 1), 'RF': (False, 1), 'RB': (False, 1), 'LB': (False, 1)},
-        'right':          {'LF': (True,  1), 'RF': (False, 1), 'RB': (True,  1), 'LB': (False, 1)},
-        'left':           {'LF': (False, 1), 'RF': (True,  1), 'RB': (False, 1), 'LB': (True,  1)},
-        'left_forward':   {'LF': (True, .5), 'RF': (True,  1), 'RB': (True,  1), 'LB': (True, .5)},
-        'right_forward':  {'LF': (True,  1), 'RF': (True, .5), 'RB': (True, .5), 'LB': (True,  1)},
-        'left_backward':  {'LF': (False, .5), 'RF': (False,  1), 'RB': (False,  1), 'LB': (False, .5)},
-        'right_backward': {'LF': (False,  1), 'RF': (False, .5), 'RB': (False, .5), 'LB': (False,  1)},
-        'turn_left':      {'LF': (False, 1), 'RF': (True,  1), 'RB': (True,  1), 'LB': (False, 1)},
-        'turn_right':     {'LF': (True,  1), 'RF': (False, 1), 'RB': (False, 1), 'LB': (True,  1)},
+        'forward':        {'LF': (True,  1),   'RF': (True,  1),   'RB': (True,  1),   'LB': (True,  1)},
+        'backward':       {'LF': (False, 1),   'RF': (False, 1),   'RB': (False, 1),   'LB': (False, 1)},
+        'right':          {'LF': (True,  1),   'RF': (False, 1),   'RB': (True,  1),   'LB': (False, 1)},
+        'left':           {'LF': (False, 1),   'RF': (True,  1),   'RB': (False, 1),   'LB': (True,  1)},
+        'left_forward':   {'LF': (True,  0.5), 'RF': (True,  1),   'RB': (True,  1),   'LB': (True,  0.5)},
+        'right_forward':  {'LF': (True,  1),   'RF': (True,  0.5), 'RB': (True,  0.5), 'LB': (True,  1)},
+        'left_backward':  {'LF': (False, 0.5), 'RF': (False, 1),   'RB': (False, 1),   'LB': (False, 0.5)},
+        'right_backward': {'LF': (False, 1),   'RF': (False, 0.5), 'RB': (False, 0.5), 'LB': (False, 1)},
+        'turn_left':      {'LF': (False, 1),   'RF': (True,  1),   'RB': (True,  1),   'LB': (False, 1)},
+        'turn_right':     {'LF': (True,  1),   'RF': (False, 1),   'RB': (False, 1),   'LB': (True,  1)},
     }
 
     def __init__(self):
-        # Cache PWM and Dir pin objects once at init
         self._motors = {}
-        for name, (pwm_pin, dir_pin) in self.MOTOR_PINS.items():
+
+        for name, (fwd_pin, bwd_pin) in self.MOTOR_PINS.items():
+            fwd = Pin(fwd_pin, Pin.OUT)
+            bwd = Pin(bwd_pin, Pin.OUT)
+
+            fwd_pwm = PWM(fwd)
+            bwd_pwm = PWM(bwd)
+
+            fwd_pwm.freq(500)
+            bwd_pwm.freq(500)
+
             self._motors[name] = {
-                'pwm_fwd': PWM(Pin(pwm_pin)),
-                'pwm_bwd': PWM(Pin(dir_pin)),
-                'dir_fwd': Pin(dir_pin, Pin.OUT),
-                'dir_bwd': Pin(pwm_pin, Pin.OUT),
+                'fwd_pin': fwd,
+                'bwd_pin': bwd,
+                'fwd_pwm': fwd_pwm,
+                'bwd_pwm': bwd_pwm
             }
-            self._motors[name]['pwm_fwd'].freq(500)
-            self._motors[name]['pwm_bwd'].freq(500)
 
     def _set_motor(self, name, forward, speed):
         """Drive one motor. forward=True/False, speed=0-100."""
-        m = self._motors[name]
+        speed = max(0, min(speed, 100))  # clamp
         duty = int(speed / 100 * 65535)
+
+        m = self._motors[name]
+
         if forward:
-            m['dir_fwd'].low()
-            m['pwm_fwd'].duty_u16(duty)
-            m['pwm_bwd'].duty_u16(0)
+            m['bwd_pwm'].duty_u16(0)
+            m['fwd_pwm'].duty_u16(duty)
         else:
-            m['dir_bwd'].low()
-            m['pwm_bwd'].duty_u16(duty)
-            m['pwm_fwd'].duty_u16(0)
+            m['fwd_pwm'].duty_u16(0)
+            m['bwd_pwm'].duty_u16(duty)
 
     def motor_stop(self):
-        for name in self._motors:
-            m = self._motors[name]
-            m['pwm_fwd'].duty_u16(0)
-            m['pwm_bwd'].duty_u16(0)
+        for m in self._motors.values():
+            m['fwd_pwm'].duty_u16(0)
+            m['bwd_pwm'].duty_u16(0)
 
     def move(self, status, direction, speed):
-        if status == 0 or direction not in self.MOVE_MAP:
-            if direction not in self.MOVE_MAP:
-                print("Direction error!")
+        if status == 0:
+            self.motor_stop()
+            return
+
+        if direction not in self.MOVE_MAP:
+            print("Direction error:", direction)
             self.motor_stop()
             return
 
         for motor_name, (fwd, scale) in self.MOVE_MAP[direction].items():
-            if fwd is None:
-                # Motor disabled for this direction
-                m = self._motors[motor_name]
-                m['pwm_fwd'].duty_u16(0)
-                m['pwm_bwd'].duty_u16(0)
-            else:
-                self._set_motor(motor_name, fwd, speed * scale)
-          
-  
-class Line_tracking():
+            self._set_motor(motor_name, fwd, speed * scale)
+
+
+class Line_tracking:
     def __init__(self):
-        self.ir_left = Pin(6, Pin.IN)
+        self.ir_left   = Pin(6, Pin.IN)
         self.ir_middle = Pin(5, Pin.IN)
-        self.ir_right = Pin(4, Pin.IN)
-        
+        self.ir_right  = Pin(4, Pin.IN)
+
     def get_ir_value(self):
-        return [self.ir_left.value(),self.ir_middle.value() ,self.ir_right.value()]
-    
+        return (
+            self.ir_left.value(),
+            self.ir_middle.value(),
+            self.ir_right.value()
+        )
+
+
 
 class LcdApi:
     """Implements the API for talking with HD44780 compatible character LCDs.
@@ -101,6 +101,11 @@ class LcdApi:
 
     It is expected that a derived class will implement the hal_xxx functions.
     """
+
+    # The following constant names were lifted from the avrlib lcd.h
+    # header file, however, I changed the definitions from bit numbers
+    # to bit masks.
+    #
     # HD44780 LCD controller command set
 
     LCD_CLR = 0x01              # DB0: clear display
@@ -280,10 +285,12 @@ class LcdApi:
         function.
         """
         raise NotImplementedError
-    
 
+
+# The PCF8574 has a jumper selectable address: 0x20 - 0x27
 DEFAULT_I2C_ADDR = 0x27
 
+# Defines shifts(移位) or masks（掩码） for the various LCD line attached to the PCF8574
 
 MASK_RS = 0x01
 MASK_RW = 0x02
@@ -361,6 +368,6 @@ class LCD1602(I2cLcd):
     def __init__(self):
         self.DEFAULT_I2C_ADDR = 0x27
         self.i2c = I2C(0,sda=Pin(20),scl=Pin(21),freq=400000)
-        
+
     def lcd(self):
         self.lcd = I2cLcd(self.i2c, self.DEFAULT_I2C_ADDR, 2, 16)
